@@ -114,7 +114,7 @@ public class AggregationTiled extends Aggregation implements ProxyReader {
         
         //Group.Builder newGroup = BuilderHelper.findGroup(ncDataset, aggVar.getParentGroupBuilder());
         VariableDS.Builder<?> vagg = VariableDS.builder().setName(aggVar.shortName).setDataType(aggVar.dataType)
-        .setParentGroupBuilder(rootGroup).setDimensionsByName(dimName + " " + aggVar.makeDimensionsString());
+        .setParentGroupBuilder(rootGroup).setDimensionsByName(aggVar.makeDimensionsString());
         vagg.setProxyReader(this); // do the reading here
         BuilderHelper.transferAttributes(aggVar.getAttributeContainer(), vagg.getAttributeContainer());
 
