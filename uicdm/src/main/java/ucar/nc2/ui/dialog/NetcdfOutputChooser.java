@@ -15,6 +15,9 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import ucar.nc2.write.NetcdfFileFormat;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Arrays;
 
 /**
  * @author John Caron
@@ -71,7 +74,8 @@ public class NetcdfOutputChooser extends JDialog {
   }
 
   private void okButtonActionPerformed(ActionEvent e) {
-    Data data = new Data(outputFilename.getText(), (NetcdfFileFormat) netcdfVersion.getSelectedItem(),
+    String filename=outputFilename.getText();
+    Data data = new Data(filename, (NetcdfFileFormat)netcdfVersion.getSelectedItem() ,
         (Nc4Chunking.Strategy) chunking.getSelectedItem(), deflate.isSelected(), shuffle.isSelected());
     firePropertyChange("OK", null, data);
     setVisible(false);
@@ -105,7 +109,10 @@ public class NetcdfOutputChooser extends JDialog {
     label1 = new JLabel();
     outputFilename = new JTextField();
     label2 = new JLabel();
-    netcdfVersion = new JComboBox(NetcdfFileWriter.Version.values());
+    NetcdfFileFormat [] allFormats=NetcdfFileFormat.values();
+    NetcdfFileFormat [] validFormatValues=Arrays.copyOfRange(NetcdfFileFormat.values(),1,allFormats.length-1);
+
+    netcdfVersion = new JComboBox(validFormatValues);
     panel1 = new JPanel();
     label3 = new JLabel();
     chunking = new JComboBox(Nc4Chunking.Strategy.values());
