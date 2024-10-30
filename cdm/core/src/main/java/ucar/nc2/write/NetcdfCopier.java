@@ -368,7 +368,7 @@ public class NetcdfCopier {
           byteWriteTotal += data.getSize();
         }
 
-        index.setCurrentCounter(index.currentElement() + (int) Index.computeSize(chunkShape));
+        index.setCurrentCounter(index.currentElement() + Index.computeSize(chunkShape));
         if (cancel.isCancel()) {
           return;
         }

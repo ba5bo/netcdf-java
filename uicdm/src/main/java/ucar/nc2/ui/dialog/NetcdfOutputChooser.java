@@ -74,8 +74,8 @@ public class NetcdfOutputChooser extends JDialog {
   }
 
   private void okButtonActionPerformed(ActionEvent e) {
-    String filename=outputFilename.getText();
-    Data data = new Data(filename, (NetcdfFileFormat)netcdfVersion.getSelectedItem() ,
+    String filename = outputFilename.getText();
+    Data data = new Data(filename, (NetcdfFileFormat) netcdfVersion.getSelectedItem(),
         (Nc4Chunking.Strategy) chunking.getSelectedItem(), deflate.isSelected(), shuffle.isSelected());
     firePropertyChange("OK", null, data);
     setVisible(false);
@@ -109,8 +109,8 @@ public class NetcdfOutputChooser extends JDialog {
     label1 = new JLabel();
     outputFilename = new JTextField();
     label2 = new JLabel();
-    NetcdfFileFormat [] allFormats=NetcdfFileFormat.values();
-    NetcdfFileFormat [] validFormatValues=Arrays.copyOfRange(NetcdfFileFormat.values(),1,allFormats.length-1);
+    NetcdfFileFormat[] allFormats = NetcdfFileFormat.values();
+    NetcdfFileFormat[] validFormatValues = Arrays.copyOfRange(NetcdfFileFormat.values(), 1, allFormats.length - 1);
 
     netcdfVersion = new JComboBox(validFormatValues);
     panel1 = new JPanel();
