@@ -18,12 +18,15 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.StringTokenizer;
+
 import javax.annotation.Nullable;
+
 import org.jdom2.Element;
 import org.jdom2.JDOMException;
 import org.jdom2.Namespace;
 import org.jdom2.input.SAXBuilder;
 import org.jdom2.output.XMLOutputter;
+
 import thredds.inventory.MFile;
 import thredds.inventory.MFiles;
 import ucar.ma2.Array;
@@ -1366,9 +1369,9 @@ public class NcmlReader {
     } else if (type.equalsIgnoreCase("union")) {
       agg = new AggregationUnion(builder, dimName, recheck);
 
+    } else if (type.equalsIgnoreCase("tiled")) {
+      agg = new AggregationTiled(builder, dimName, recheck);
       /*
-       * } else if (type.equalsIgnoreCase("tiled")) {
-       * agg = new AggregationTiled(builder, dimName, recheck);
        *
        * } else if (type.equalsIgnoreCase("forecastModelRunCollection")
        * || type.equalsIgnoreCase("forecastModelRunSingleCollection")) {

@@ -1,0 +1,396 @@
+/*
+ * Copyright (c) 1998-2018 John Caron and University Corporation for Atmospheric Research/Unidata
+ * See LICENSE for license information.
+ */
+package ucar.nc2.internal.ncml;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.StringTokenizer;
+
+import ucar.ma2.Array;
+import ucar.ma2.DataType;
+import ucar.ma2.Index;
+import ucar.ma2.InvalidRangeException;
+import ucar.ma2.Range;
+import ucar.ma2.Section;
+import ucar.nc2.Dimension;
+import ucar.nc2.Group;
+import ucar.nc2.NetcdfFile;
+import ucar.nc2.ProxyReader;
+import ucar.nc2.Variable;
+import ucar.nc2.dataset.CoordinateAxis;
+import ucar.nc2.dataset.NetcdfDataset;
+import ucar.nc2.dataset.VariableDS;
+import ucar.nc2.util.CancelTask;
+
+/**
+ * Tiled Aggregation.
+ *
+ * @deprecated do not use
+ */
+@Deprecated
+public class AggregationTiled extends Aggregation implements ProxyReader {
+  private List<String> dimNames = new ArrayList<>();
+  private List<Optional<Dimension>> dims = new ArrayList<>();
+  private Section section;
+
+  private boolean debug;
+
+  public AggregationTiled(NetcdfDataset.Builder<?> ncd, String dimName, String recheckS) {
+    super(ncd, dimName, Type.tiled, recheckS);
+
+    // parse the tiling dimension names
+    StringTokenizer stoke = new StringTokenizer(dimName);
+    while (stoke.hasMoreTokens()) {
+      dimNames.add(stoke.nextToken());
+    }
+  }
+
+  @Override
+  protected void buildNetcdfDataset(CancelTask cancelTask) throws IOException {
+    // open a "typical" nested dataset and copy it to newds
+    AggDataset typicalDataset = getTypicalDataset();
+    NetcdfFile typical = typicalDataset.acquireFile(null);
+    BuilderHelper.transferDataset(typical, ncDataset, null);
+
+    Group.Builder rootGroup = ncDataset.rootGroup;
+    // find the tiling dimensions
+    for (String dn : dimNames) {
+
+      Optional<Dimension> dim = rootGroup.findDimension(dn); // dimension is from new dataset
+      if (null != dim)
+        dims.add(dim);
+      else
+        throw new IllegalArgumentException("Unknown dimension = " + dimName);
+    }
+
+    // run through the datasets to get the union of the ranges
+    // add names to the dataset sections while were there
+    Section result = null;
+    for (AggDataset d : datasets) {
+      DatasetTiled dt = (DatasetTiled) d;
+      try {
+        dt.section = dt.section.addRangeNames(dimNames);
+        result = (result == null) ? dt.section : result.union(dt.section);
+      } catch (InvalidRangeException e) {
+        throw new IllegalArgumentException(e);
+      }
+    }
+
+    // sanity checks
+    assert result != null;
+    assert result.getRank() == dims.size();
+    for (Range r : result.getRanges()) {
+      assert r.first() == 0;
+      assert r.stride() == 1;
+    }
+    section = result;
+
+    // set dimension lengths to union length
+    int count = 0;
+    for (Range r : section.getRanges()) {
+      Optional<Dimension> dim = dims.get(count++);
+      dim.get().setLength(r.length());
+    }
+
+    List<String> aggVarNames = new ArrayList<>();
+
+    for (Variable v : typical.getVariables()) {
+        if (!(v instanceof CoordinateAxis))
+          aggVarNames.add(v.getShortName());
+    }
+      
+    // run through all variables
+    //for (Variable v : typical.getVariables()) {
+    for (String varname : aggVarNames) {
+      Optional<Variable.Builder<?>> aggVarOpt = rootGroup.findVariableLocal(varname);
+      Variable.Builder<?> aggVar = aggVarOpt.get();
+
+      if (isTiled(aggVar)) {
+        
+        //Group.Builder newGroup = BuilderHelper.findGroup(ncDataset, aggVar.getParentGroupBuilder());
+        VariableDS.Builder<?> vagg = VariableDS.builder().setName(aggVar.shortName).setDataType(aggVar.dataType)
+        .setParentGroupBuilder(rootGroup).setDimensionsByName(dimName + " " + aggVar.makeDimensionsString());
+        vagg.setProxyReader(this); // do the reading here
+        BuilderHelper.transferAttributes(aggVar.getAttributeContainer(), vagg.getAttributeContainer());
+
+        rootGroup.replaceVariable(vagg);
+        // newGroup.removeVariable(vagg.shortName);
+        // newGroup.addVariable(vagg);
+      }
+      if (cancelTask != null && cancelTask.isCancel())
+        return;
+    }
+
+    setDatasetAcquireProxy(typicalDataset, ncDataset);
+    typicalDataset.close(typical); // close it because we use DatasetProxyReader to acquire
+
+     // ncDataset.finish();
+  }
+
+  // a variable is tiled if any of its dimensions are tiled
+  private boolean isTiled(Variable.Builder<?> v) {
+    for (Dimension d : v.getDimensions()) {
+      for (Range r : section.getRanges()) {
+        if (d.getShortName().equals(r.getName()))
+          return true;
+      }
+    }
+    return false;
+  }
+
+  // @Override
+  // protected void rebuildDataset() throws IOException {
+  //   ncDataset.empty();
+  //   dims = new ArrayList<>();
+  //   buildNetcdfDataset(null);
+  // }
+
+  @Override
+  public Array reallyRead(Variable mainv, CancelTask cancelTask) throws IOException {
+
+    DataType dtype = (mainv instanceof VariableDS) ? ((VariableDS) mainv).getOriginalDataType() : mainv.getDataType();
+    Array allData = Array.factory(dtype, mainv.getShape()); // LOOK need fill
+    Section wantSection = mainv.getShapeAsSection();
+    if (debug)
+      System.out.println("wantSection: " + wantSection + " for var " + mainv.getFullName());
+
+    // make concurrent
+    List<AggDataset> nestedDatasets = getDatasets();
+    for (AggDataset vnested : nestedDatasets) {
+      DatasetTiled dtiled = (DatasetTiled) vnested;
+
+      // construct the "dataSection" by replacing the tiled dimensions
+      Section tiledSection = dtiled.makeVarSection(mainv);
+
+      // now use a TileLayout to figure out how to "distribute" it to the result array
+      Array varData;
+      TileLayout index;
+      try {
+        // read in the entire data from this nested dataset
+        varData = dtiled.read(mainv, cancelTask);
+        if (varData == null)
+          throw new IOException("cant read " + mainv.getFullName());
+
+        index = new TileLayout(tiledSection, wantSection);
+
+        if (debug)
+          System.out.println(" varData read: " + new Section(varData.getShape()));
+      } catch (InvalidRangeException e) {
+        throw new IllegalArgumentException(e.getMessage());
+      }
+
+
+      while (index.hasNext()) {
+        try {
+          Array.arraycopy(varData, index.srcPos, allData, index.resultPos, index.nelems);
+        } catch (RuntimeException e) {
+          logger.error("reallyRead {} ", index, e);
+          throw e;
+        }
+      }
+
+      // covers the case of coordinate variables for a 1 row or 1 col tiling.
+      // doesnt eliminate duplicate reading in general
+      if (varData.getSize() == mainv.getSize())
+        break;
+
+      if ((cancelTask != null) && cancelTask.isCancel())
+        return null;
+    }
+
+    return allData;
+  }
+
+  @Override
+  public Array reallyRead(Variable mainv, Section wantSection, CancelTask cancelTask) throws IOException {
+
+    // If its full sized, then use full read, so that data might get cached.
+    long size = wantSection.computeSize();
+    if (size == mainv.getSize())
+      return reallyRead(mainv, cancelTask);
+
+    DataType dtype = (mainv instanceof VariableDS) ? ((VariableDS) mainv).getOriginalDataType() : mainv.getDataType();
+    Array allData = Array.factory(dtype, wantSection.getShape()); // LOOK need fill
+    if (debug) {
+      System.out.println(dtype + " allData allocated: " + new Section(allData.getShape()));
+    }
+
+    // make concurrent
+
+    // run through all the datasets
+    List<AggDataset> nestedDatasets = getDatasets();
+    for (AggDataset vnested : nestedDatasets) {
+      DatasetTiled dtiled = (DatasetTiled) vnested;
+      Section tiledSection = dtiled.makeVarSection(mainv);
+      TileLayout index;
+      Array varData;
+
+      try {
+        if (!tiledSection.intersects(wantSection))
+          continue;
+
+        // read in the desired section of data from this nested dataset
+        Section needToRead = tiledSection.intersect(wantSection); // the part we need to read
+
+        if (debug)
+          System.out.println(" tiledSection: " + tiledSection + " from file " + dtiled.getLocation());
+        if (debug)
+          System.out.println(" intersection: " + needToRead);
+
+        Section localNeed = needToRead.shiftOrigin(tiledSection); // shifted to the tiled section
+        varData = dtiled.read(mainv, cancelTask, localNeed.getRanges());
+        if (varData == null)
+          throw new IOException("cant read " + mainv.getFullName());
+
+        index = new TileLayout(needToRead, wantSection);
+
+      } catch (InvalidRangeException e) {
+        throw new IllegalArgumentException(e.getMessage());
+      }
+
+      while (index.hasNext()) {
+        try {
+          Array.arraycopy(varData, index.srcPos, allData, index.resultPos, index.nelems);
+        } catch (RuntimeException e) {
+          logger.error("tiledSection {} {} ", index, tiledSection, e);
+          throw e;
+        }
+      }
+
+      // covers the case of coordinate variables for a 1 row or 1 col tiling.
+      // doesnt eliminate duplicate reading in general
+      if (varData.getSize() == mainv.getSize())
+        break;
+
+      if ((cancelTask != null) && cancelTask.isCancel())
+        return null;
+    }
+
+    return allData;
+  }
+
+  private class TileLayout {
+    // Section dataSection, resultSection;
+    private int srcPos, resultPos, nelems;
+    private int total, startElem;
+    Index index;
+
+    TileLayout(Section localSection, Section wantSection) throws InvalidRangeException {
+      Section dataSection = localSection.compact();
+      Section resultSection = wantSection.compact();
+      if (debug) {
+        System.out.println(" resultSection: " + resultSection);
+        System.out.println(" dataSection: " + dataSection);
+      }
+
+      int rank = dataSection.getRank();
+
+      // total elements to transfer
+      total = (int) dataSection.computeSize();
+
+      // figure out the offset
+      long product = 1;
+      startElem = 0; // offset in want
+      for (int ii = rank - 1; ii >= 0; ii--) {
+        int d = dataSection.getOrigin(ii) - resultSection.getOrigin(ii);
+        if (d > 0)
+          startElem += product * d;
+        product *= resultSection.getShape(ii);
+      }
+      resultPos = startElem;
+
+      // we will use an Index object to keep track of the chunks
+      // last range length is nelems; reduce index rank
+      nelems = localSection.getShape(rank - 1);
+      int[] stride = new int[rank - 1];
+      int[] shape = new int[rank - 1];
+
+      product = resultSection.getShape(rank - 1);
+      for (int ii = rank - 2; ii >= 0; ii--) {
+        stride[ii] = (int) product;
+        shape[ii] = dataSection.getShape(ii);
+        product *= resultSection.getShape(ii);
+      }
+      index = new Index(shape, stride);
+    }
+
+    boolean first = true;
+
+    boolean hasNext() {
+      if (first) {
+        first = false;
+        return true;
+      }
+
+      srcPos += nelems;
+      if (srcPos >= total)
+        return false;
+
+      index.incr();
+      resultPos = startElem + index.currentElement();
+      return true;
+    }
+
+    public String toString() {
+      return "  nElems: " + nelems + " srcPos: " + srcPos + " resultPos: " + resultPos;
+    }
+  }
+
+  @Override
+  protected AggDataset makeDataset(String cacheName, String location, String id, String ncoordS, String coordValueS,
+      String sectionSpec, EnumSet<NetcdfDataset.Enhance> enhance, ucar.nc2.util.cache.FileFactory reader) {
+    return new DatasetTiled(this,cacheName, location, id, sectionSpec, enhance, reader);
+  }
+
+  /**
+   * Encapsolates a NetcdfFile that is a component of the aggregation.
+   */
+  class DatasetTiled extends AggDataset {
+    protected String sectionSpec;
+    protected Section section;
+
+    /**
+     * Dataset constructor.
+     * With this constructor, the actual opening of the dataset is deferred, and done by the reader.
+     * Used with explicit netcdf elements, and scanned files.
+     *
+     * @param cacheName a unique name to use for caching
+     * @param location attribute "location" on the netcdf element
+     * @param id attribute "id" on the netcdf element
+     * @param sectionSpec attribute "sectionSpec" on the netcdf element
+     * @param enhance open dataset in enhance mode
+     * @param reader factory for reading this netcdf dataset; if null, use NetcdfDataset.open( location)
+     */
+    protected DatasetTiled(Aggregation aggregation,String cacheName, String location, String id, String sectionSpec,
+        EnumSet<NetcdfDataset.Enhance> enhance, ucar.nc2.util.cache.FileFactory reader) {
+      super(cacheName, location, id, enhance, reader,aggregation.spiObject,aggregation.ncmlElem);
+      this.sectionSpec = sectionSpec;
+
+      try {
+        section = new Section(sectionSpec);
+      } catch (InvalidRangeException e) {
+        throw new IllegalArgumentException(e);
+      }
+    }
+
+    boolean isNeeded(Section wantSection) throws InvalidRangeException {
+      return section.intersects(wantSection);
+    }
+
+    // construct the Variable section pertaining to this Datatset by replacing the tiled dimensions
+    Section makeVarSection(Variable mainv) {
+      Section vSection = mainv.getShapeAsSection();
+      Section.Builder dataSection = Section.builder();
+      for (Range r : vSection.getRanges()) {
+        Range rr = section.find(r.getName());
+        dataSection.appendRange(rr != null ? rr : r);
+      }
+      return dataSection.build();
+    }
+  }
+}
