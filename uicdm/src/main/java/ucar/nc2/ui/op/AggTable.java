@@ -10,7 +10,8 @@ import ucar.ma2.Array;
 import ucar.nc2.NetcdfFile;
 import ucar.nc2.Variable;
 import ucar.nc2.dataset.NetcdfDataset;
-import ucar.nc2.ncml.Aggregation;
+import ucar.nc2.internal.ncml.Aggregation;
+import ucar.nc2.internal.ncml.AggDataset;
 import ucar.nc2.write.Ncdump;
 import ucar.ui.widget.BAMutil;
 import ucar.ui.widget.IndependentWindow;
@@ -134,7 +135,7 @@ public class AggTable extends JPanel {
 
     Aggregation agg = (Aggregation) ncd.getAggregation();
     List<DatasetBean> beanList = new ArrayList<>();
-    for (Aggregation.Dataset dataset : agg.getDatasets()) {
+    for (AggDataset dataset : agg.getDatasets()) {
       beanList.add(new DatasetBean(dataset));
     }
 
@@ -162,7 +163,7 @@ public class AggTable extends JPanel {
 
       for (Object bean : datasetTable.getBeans()) {
         DatasetBean dbean = (DatasetBean) bean;
-        Aggregation.Dataset ads = dbean.ds;
+        AggDataset ads = dbean.ds;
 
         try (NetcdfFile aggFile = ads.acquireFile(null)) {
           f.format("   Component file %s%n", aggFile.getLocation());
@@ -188,7 +189,7 @@ public class AggTable extends JPanel {
       NetcdfFile org = null;
       for (Object bean : datasetTable.getBeans()) {
         DatasetBean dbean = (DatasetBean) bean;
-        Aggregation.Dataset ads = dbean.ds;
+        AggDataset ads = dbean.ds;
 
         NetcdfFile ncd = ads.acquireFile(null);
         if (org == null) {
@@ -211,7 +212,7 @@ public class AggTable extends JPanel {
   }
 
   public static class DatasetBean {
-    Aggregation.Dataset ds;
+    AggDataset ds;
 
     @Nullable
     NetcdfFile acquireFile() {
@@ -223,7 +224,7 @@ public class AggTable extends JPanel {
       }
     }
 
-    DatasetBean(Aggregation.Dataset ds) {
+    DatasetBean(AggDataset ds) {
       this.ds = ds;
     }
 

@@ -6,9 +6,12 @@ import java.util.EnumSet;
 import java.util.Formatter;
 import java.util.List;
 import java.util.Set;
+
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
+
 import org.jdom2.Element;
+
 import thredds.inventory.MFile;
 import thredds.inventory.MFiles;
 import ucar.ma2.Array;
@@ -26,7 +29,7 @@ import ucar.nc2.util.CancelTask;
 
 /** Encapsolates a NetcdfFile, used by AggProxyReader. */
 @Immutable
-class AggDataset implements Comparable<AggDataset> {
+public class AggDataset implements Comparable<AggDataset> {
   private static final boolean debugOpenFile = false;
   private static final boolean debugRead = false;
 
